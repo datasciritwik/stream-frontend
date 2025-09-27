@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>Production Voice AI Client</title>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice AI Client</h1>
+        <p id="status">Click to activate microphone</p>
+        <button id="vadButton">Activate VAD</button>
+        <div class="playback-container">
+            <h3>Last Utterance</h3>
+            <div id="audioPlaybackContainer"></div>
+        </div>
+        <p class="info">Powered by RNNoise for superior voice activity detection.</p>
+    </div>
+    <script type="module" src="/main.js"></script>
+</body>
+</html>
