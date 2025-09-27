@@ -1,4 +1,4 @@
-const FASTAPI_ENDPOINT = "http://127.0.0.1:8000/upload-audio/";
+const FASTAPI_ENDPOINT = "https://stream-backend-j807.onrender.com/upload-audio/";
 
 export async function uploadAudio(wavBlob) {
     const formData = new FormData();

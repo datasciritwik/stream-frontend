@@ -38,9 +38,12 @@ function handleVadToggle() {
         ui.setVadButtonState(false);
     } else {
         console.log('Starting VAD');
-        // Pass the handler functions to the VAD constructor
         vadProcessor = new VADProcessor(handleUtterance, ui.updateStatus);
-        vadProcessor.start();
+        vadProcessor.start().then(() => {
+            console.log('VAD started successfully'); // Add this
+        }).catch(error => {
+            console.error('VAD failed to start:', error); // Add this
+        });
         ui.setVadButtonState(true);
     }
 }
