@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-Time Conversational AI</title>
+<style>
+    body { font-family: system-ui, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; color: #333; }
+    .container { display: flex; flex-direction: column; text-align: center; background-color: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 90%; max-width: 600px; height: 90vh; max-height: 800px; }
+    h1 { margin-top: 0; }
+    p#status { font-size: 1.1em; color: #606770; height: 25px; line-height: 25px; transition: color 0.3s; margin-bottom: 20px; }
+    #transcript { flex-grow: 1; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: left; background-color: #fafafa; margin-bottom: 20px; }
+    .transcript-entry { margin-bottom: 12px; }
+    .transcript-entry strong { color: #007bff; }
+    .transcript-entry.ai { margin-bottom: 12px; }
+    .transcript-entry.ai strong { color: #42b72a; }
+    button#connectButton { background-color: #007bff; color: white; border: none; padding: 15px 30px; font-size: 1.2em; font-weight: bold; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; width: 100%; }
+    button#connectButton.active { background-color: #fa383e; }
+    audio { display: none; } /* Hide the audio element; it's just for playback */
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Conversational AI</h1>
+    <p id="status">Ready to connect</p>
+    <div id="transcript"></div>
+    <button id="connectButton">Connect and Start Speaking</button>
+    <audio id="aiAudio" autoplay></audio>
+</div>
+
+<script>
+const connectButton = document.getElementById('connectButton');
+const statusDisplay = document.getElementById('status');
+const transcriptDiv = document.getElementById('transcript');
+const aiAudioElement = document.getElementById('aiAudio');
+
+// Use a unique ID for the conversation to maintain history
+const CONVERSATION_ID = crypto.randomUUID();
+const WEBSOCKET_URL = `ws://127.0.0.1:8000/ws/${CONVERSATION_ID}`;
+
+// --- State Variables ---
+let websocket;
+let peerConnection;
+let speechRecognition;
+let isConnected = false;
+let isListening = false;
+let aiTranscriptSpan = null; // To hold the current AI response span
+
+// --- UI Helper Functions ---
+function updateStatus(message, color = '#606770') {
+    statusDisplay.textContent = message;
+    statusDisplay.style.color = color;
+}
+
+function addToTranscript(speaker, text) {
+    const entry = document.createElement('div');
+    entry.classList.add('transcript-entry');
+    if (speaker === 'AI') {
+        entry.classList.add('ai');
+    }
+    entry.innerHTML = `<strong>${speaker}:</strong> `;
+    
+    const contentSpan = document.createElement('span');
+    contentSpan.textContent = text;
+    entry.appendChild(contentSpan);
+
+    transcriptDiv.appendChild(entry);
+    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+    return contentSpan;
+}
+
+function appendToAiTranscript(text) {
+    if (!aiTranscriptSpan) {
+        aiTranscriptSpan = addToTranscript('AI', '');
+    }
+    aiTranscriptSpan.textContent += text;
+    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+}
+
+
+// --- Core Connection Logic ---
+connectButton.addEventListener('click', () => {
+    if (isConnected) {
+        disconnect();
+    } else {
+        connect();
+    }
+});
+
+function connect() {
+    updateStatus('Connecting...');
+    websocket = new WebSocket(WEBSOCKET_URL);
+
+    websocket.onopen = () => {
+        console.log("WebSocket connection established.");
+        updateStatus('Initializing...', '#007bff');
+        initializeWebRTC();
+    };
+
+    websocket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        switch(message.type) {
+            case 'webrtc_answer':
+                handleWebRTCAnswer(message);
+                break;
+            case 'text_chunk':
+                appendToAiTranscript(message.data);
+                break;
+            case 'stream_end':
+                aiTranscriptSpan = null; // Reset for the next AI response
+                updateStatus('Listening...', '#42b72a');
+                break;
+        }
+    };
+
+    websocket.onerror = (error) => {
+        console.error("WebSocket Error:", error);
+        updateStatus('Connection Error!', '#fa383e');
+    };
+
+    websocket.onclose = () => {
+        console.log("WebSocket connection closed.");
+        if (isConnected) { // Prevents calling disconnect twice
+            disconnect();
+        }
+    };
+}
+
+function disconnect() {
+    console.log("Disconnecting...");
+    stopSpeechRecognition();
+    
+    if (websocket) websocket.close();
+    if (peerConnection) peerConnection.close();
+    
+    isConnected = false;
+    isListening = false;
+    aiTranscriptSpan = null;
+    
+    connectButton.textContent = 'Connect and Start Speaking';
+    connectButton.classList.remove('active');
+    updateStatus('Ready to connect');
+}
+
+// --- WebRTC Handling ---
+async function initializeWebRTC() {
+    peerConnection = new RTCPeerConnection();
+
+    peerConnection.ontrack = (event) => {
+        console.log("Received remote audio track.");
+        if (event.streams && event.streams[0]) {
+            aiAudioElement.srcObject = event.streams[0];
+
+            const playPromise = aiAudioElement.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.error("Audio playback failed:", error);
+                    updateStatus("Error: Could not play audio.", "#fa383e");
+                });
+            }
+        }
+    };
+
+    try {
+        const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false
+        });
+        await peerConnection.setLocalDescription(offer);
+
+        console.log("Sending WebRTC offer.");
+        websocket.send(JSON.stringify({
+            type: 'webrtc_offer',
+            sdp: peerConnection.localDescription.sdp,
+        }));
+    } catch (e) {
+        console.error("Error creating WebRTC offer:", e);
+        updateStatus("WebRTC Error!", "#fa383e");
+    }
+}
+
+async function handleWebRTCAnswer(message) {
+    console.log("Received WebRTC answer.");
+    try {
+        const answer = new RTCSessionDescription({
+            type: 'answer',
+            sdp: message.sdp,
+        });
+        await peerConnection.setRemoteDescription(answer);
+        console.log("WebRTC connection established.");
+        
+        // Connection is fully established, start listening
+        isConnected = true;
+        connectButton.textContent = 'Disconnect';
+        connectButton.classList.add('active');
+        startSpeechRecognition();
+
+    } catch (e) {
+        console.error("Error setting remote description:", e);
+    }
+}
+
+// --- Speech Recognition (STT) ---
+function initializeSpeechRecognition() {
+    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!window.SpeechRecognition) {
+        updateStatus("Speech Recognition not supported by this browser.", "#fa383e");
+        return;
+    }
+    speechRecognition = new SpeechRecognition();
+    speechRecognition.lang = 'en-US';
+    speechRecognition.interimResults = true;
+    speechRecognition.continuous = true;
+
+    speechRecognition.onresult = (event) => {
+        let interim_transcript = '';
+        let final_transcript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                final_transcript += event.results[i][0].transcript;
+            } else {
+                interim_transcript += event.results[i][0].transcript;
+            }
+        }
+        
+        // Show interim results on screen for better UX
+        // You could add a temporary element for this
+        
+        if (final_transcript) {
+            console.log(`Final transcript: ${final_transcript}`);
+            addToTranscript('You', final_transcript);
+            updateStatus('Thinking...', '#ff9800');
+            websocket.send(JSON.stringify({
+                type: 'user_text',
+                text: final_transcript
+            }));
+        }
+    };
+
+    speechRecognition.onstart = () => {
+        isListening = true;
+        updateStatus('Listening...', '#42b72a');
+    };
+
+    speechRecognition.onend = () => {
+        isListening = false;
+        // The 'continuous' property makes it auto-restart, but if it stops for any reason
+        // (e.g., network error, long silence), we ensure it restarts if we are still connected.
+        if (isConnected) {
+            console.log("Speech recognition ended, restarting...");
+            speechRecognition.start();
+        }
+    };
+
+    speechRecognition.onerror = (event) => {
+        console.error("Speech Recognition Error:", event.error);
+        stopSpeechRecognition();
+    };
+}
+
+function startSpeechRecognition() {
+    if (!speechRecognition) {
+        initializeSpeechRecognition();
+    }
+    if (speechRecognition && !isListening) {
+        console.log("Starting speech recognition.");
+        speechRecognition.start();
+    }
+}
+
+function stopSpeechRecognition() {
+    if (speechRecognition && isListening) {
+        console.log("Stopping speech recognition.");
+        speechRecognition.stop();
+    }
+}
+
+</script>
+</body>
+</html>
